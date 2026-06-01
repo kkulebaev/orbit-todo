@@ -46,6 +46,18 @@ describe('renderDueCell — russian-relative rendering', () => {
     const task = makeTask({ dueAt: null, dueHasTime: false });
     expect(renderDueCell(task, now)).toBe('');
   });
+
+  it('drops the overdue ⚠️ + "просрочено" prefix for done tasks', () => {
+    const task = makeTask({
+      status: 'done',
+      dueAt: '2026-05-14T21:00:00.000Z', // 2026-05-15 Moscow, overdue
+      dueHasTime: false,
+    });
+    const rendered = renderDueCell(task, now);
+    expect(rendered.startsWith('⚠️')).toBe(false);
+    expect(rendered).not.toContain('просрочено');
+    expect(rendered).toContain('15 мая');
+  });
 });
 
 describe('renderTaskRow', () => {
