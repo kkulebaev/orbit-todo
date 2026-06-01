@@ -329,6 +329,16 @@ export function App({
           <Box>
             <Text>Страница: {page + 1} / {totalPages}</Text>
           </Box>
+          <Box marginTop={1}>
+            <ListView
+              items={items}
+              cursor={cursor}
+              loading={loading}
+              error={error}
+              now={now}
+              page={page}
+            />
+          </Box>
           {subMode === 'create-task' ? (
             <Box marginTop={1} flexDirection="column">
               <Text>✍️ Новая задача:</Text>
@@ -341,16 +351,6 @@ export function App({
               />
             </Box>
           ) : null}
-          <Box marginTop={1}>
-            <ListView
-              items={items}
-              cursor={cursor}
-              loading={loading}
-              error={error}
-              now={now}
-              page={page}
-            />
-          </Box>
         </>
       ) : selected ? (
         <DetailView
