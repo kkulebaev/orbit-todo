@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
+import TextInput from 'ink-text-input';
 
 import type { ApiViewerClient } from '@orbit/api-client';
 import {
@@ -201,27 +202,14 @@ export function App({
         s.subMode === 'edit-due' ||
         s.subMode === 'create-task'
       ) {
+        // CONTRACT: ink fires all useInput subscribers in parallel — this branch
+        // handles ONLY Esc. Every other key is owned by focused <TextInput>.
+        // Ctrl+U is NOT intercepted: ink-text-input v6 would still insert a
+        // literal 'u' in parallel since it does not gate ctrl+letter input.
         if (key.escape) {
           setSubMode(null);
           setEditBuffer('');
           return;
-        }
-        if (key.return) {
-          if (s.subMode === 'create-task') {
-            void submitCreate(s.editBuffer);
-            return;
-          }
-          if (!sel) return;
-          if (s.subMode === 'edit-title') void submitTitle(sel, s.editBuffer);
-          else void submitDue(sel, s.editBuffer);
-          return;
-        }
-        if (key.backspace || key.delete) {
-          setEditBuffer((b) => b.slice(0, -1));
-          return;
-        }
-        if (input.length > 0 && !key.ctrl && !key.meta) {
-          setEditBuffer((b) => b + input);
         }
         return;
       }
@@ -326,7 +314,7 @@ export function App({
         return;
       }
     },
-    [exit, exitOnQuit, mutateStatus, submitTitle, submitDue, submitDelete, submitCreate],
+    [exit, exitOnQuit, mutateStatus, submitDelete],
   );
 
   useInput(handler);
@@ -344,9 +332,13 @@ export function App({
           {subMode === 'create-task' ? (
             <Box marginTop={1} flexDirection="column">
               <Text>✍️ Новая задача:</Text>
-              <Text>
-                <Text color="yellow">{editBuffer || ' '}▎</Text>
-              </Text>
+              <TextInput
+                value={editBuffer}
+                onChange={setEditBuffer}
+                onSubmit={(v) => void submitCreate(v)}
+                focus
+                showCursor
+              />
             </Box>
           ) : null}
           <Box marginTop={1}>
@@ -366,6 +358,9 @@ export function App({
           now={now}
           subMode={subMode}
           editBuffer={editBuffer}
+          setEditBuffer={setEditBuffer}
+          onSubmitTitle={(task, v) => void submitTitle(task, v)}
+          onSubmitDue={(task, v) => void submitDue(task, v)}
         />
       ) : null}
       {message ? (
@@ -386,15 +381,15 @@ function helpBar(
 ): string {
   if (view === 'list') {
     if (subMode === 'create-task') {
-      return 'печатайте название · enter создать · esc отмена';
+      return 'печатайте · ←→ курсор · enter сохранить · esc отмена';
     }
     return '↑↓ навигация · ←→ страница · enter открыть · c создать · d закрыть · o переоткрыть · m режим · g обновить · q выход';
   }
   if (subMode === 'edit-title') {
-    return 'печатайте · enter сохранить · esc отмена';
+    return 'печатайте · ←→ курсор · enter сохранить · esc отмена';
   }
   if (subMode === 'edit-due') {
-    return 'DD.MM.YYYY [HH:MM] · пусто = очистить · enter сохранить · esc отмена';
+    return 'печатайте дату · ←→ курсор · enter сохранить (пусто = снять) · esc отмена';
   }
   if (subMode === 'confirm-delete') {
     return 'y — удалить · n / esc — отмена';
@@ -467,11 +462,17 @@ function DetailView({
   now,
   subMode,
   editBuffer,
+  setEditBuffer,
+  onSubmitTitle,
+  onSubmitDue,
 }: {
   task: TaskDto;
   now: Date;
   subMode: SubMode;
   editBuffer: string;
+  setEditBuffer: (v: string) => void;
+  onSubmitTitle: (task: TaskDto, v: string) => void;
+  onSubmitDue: (task: TaskDto, v: string) => void;
 }): React.JSX.Element {
   const statusLine = task.status === 'done' ? '✅ Выполнено' : '⏳ В работе';
   const createdLine = `Создано: ${formatSmart(new Date(task.createdAt), now)}`;
@@ -480,27 +481,36 @@ function DetailView({
   return (
     <Box flexDirection="column">
       <Text bold>📝 Задача</Text>
-      <Box marginTop={1}>
-        <Text bold>
-          {subMode === 'edit-title' ? (
-            <Text color="yellow">{editBuffer}▎</Text>
-          ) : (
-            task.title
-          )}
-        </Text>
+      <Box marginTop={1} flexDirection="column">
+        {subMode === 'edit-title' ? (
+          <TextInput
+            value={editBuffer}
+            onChange={setEditBuffer}
+            onSubmit={(v) => onSubmitTitle(task, v)}
+            focus
+            showCursor
+          />
+        ) : (
+          <Text bold>{task.title}</Text>
+        )}
       </Box>
       <Box marginTop={1} flexDirection="column">
         <Text>{statusLine}</Text>
         <Text>{createdLine}</Text>
-        {showDueLine ? (
-          <Text>
-            Срок:{' '}
-            {subMode === 'edit-due' ? (
-              <Text color="yellow">{editBuffer || '(пусто)'}▎</Text>
-            ) : (
-              dueText
-            )}
-          </Text>
+        {subMode === 'edit-due' ? (
+          <Box flexDirection="column">
+            <Text>Срок: </Text>
+            <TextInput
+              value={editBuffer}
+              onChange={setEditBuffer}
+              onSubmit={(v) => onSubmitDue(task, v)}
+              focus
+              showCursor
+            />
+            {editBuffer === '' && <Text dimColor>(пусто)</Text>}
+          </Box>
+        ) : showDueLine ? (
+          <Text>Срок: {dueText}</Text>
         ) : null}
         {task.status === 'done' && task.doneAt ? (
           <Text>Закрыто: {formatSmart(new Date(task.doneAt), now)}</Text>
