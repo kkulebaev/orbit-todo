@@ -52,23 +52,53 @@ export function tasksRoutes(prisma: PrismaClient): Router {
         return;
       }
 
-      // mode === "my": open tasks sorted by dueAt ASC (NULLS LAST), then by
-      // createdAt DESC. Tasks with a due date always surface above ones
-      // without, irrespective of whether they are overdue.
-      const where = { status: "open" as const, ownerId: viewer.id };
-      const [tasks, total] = await Promise.all([
-        prisma.task.findMany({
-          where,
-          orderBy: [
-            { dueAt: { sort: "asc", nulls: "last" } },
-            { createdAt: "desc" },
-          ],
-          skip,
-          take: PAGE_SIZE,
-        }),
-        prisma.task.count({ where }),
+      // mode === "my": two-group ordering.
+      //   Group 1 ("urgent"): dueAt is set AND dueAt < now+7d (includes
+      //     overdue). Sorted by dueAt ASC — soonest/most-overdue first.
+      //   Group 2 ("rest"): dueAt is null OR dueAt >= now+7d. Sorted by
+      //     createdAt DESC (insertion order, newest first).
+      // Pagination is over the concatenated stream: a page may straddle the
+      // group boundary, so we split skip/take across the two queries.
+      const cutoff = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      const baseWhere = { status: "open" as const, ownerId: viewer.id };
+      const urgentWhere = { ...baseWhere, dueAt: { lt: cutoff } };
+      const restWhere = {
+        ...baseWhere,
+        OR: [{ dueAt: null }, { dueAt: { gte: cutoff } }],
+      };
+
+      const [urgentCount, restCount] = await Promise.all([
+        prisma.task.count({ where: urgentWhere }),
+        prisma.task.count({ where: restWhere }),
       ]);
-      res.json({ items: tasks.map(toTaskDto), page, total });
+      const total = urgentCount + restCount;
+
+      const items = [];
+      if (skip < urgentCount) {
+        const take = Math.min(PAGE_SIZE, urgentCount - skip);
+        const urgentItems = await prisma.task.findMany({
+          where: urgentWhere,
+          orderBy: { dueAt: "asc" },
+          skip,
+          take,
+        });
+        items.push(...urgentItems);
+      }
+      if (items.length < PAGE_SIZE) {
+        const restSkip = Math.max(0, skip - urgentCount);
+        const restTake = PAGE_SIZE - items.length;
+        if (restTake > 0) {
+          const restItems = await prisma.task.findMany({
+            where: restWhere,
+            orderBy: { createdAt: "desc" },
+            skip: restSkip,
+            take: restTake,
+          });
+          items.push(...restItems);
+        }
+      }
+
+      res.json({ items: items.map(toTaskDto), page, total });
     } catch (e) {
       next(e);
     }

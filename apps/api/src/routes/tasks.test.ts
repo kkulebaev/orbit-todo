@@ -237,6 +237,111 @@ describe("tasks routes", () => {
   // Idempotency (AC-6): duplicate POST with same Idempotency-Key = one DB write
   // ---------------------------------------------------------------------------
 
+  // ---------------------------------------------------------------------------
+  // GET /v1/tasks?mode=my — two-group ordering:
+  //   group 1 = dueAt < now+7d (overdue + this week) by dueAt ASC,
+  //   group 2 = no dueAt OR dueAt >= now+7d by createdAt DESC.
+  // ---------------------------------------------------------------------------
+
+  it("GET /v1/tasks?mode=my — groups urgent (overdue + ≤7d) first by dueAt ASC, then the rest by createdAt DESC", async () => {
+    const tg = "800";
+
+    // Establish a stable createdAt ordering for the "rest" group by creating
+    // them in sequence: noDueOld, then noDueNew → expect [noDueNew, noDueOld].
+    const noDueOld = await request(app)
+      .post("/v1/tasks")
+      .set(authHeaders(tg))
+      .send({ title: "no-due old" });
+    const noDueNew = await request(app)
+      .post("/v1/tasks")
+      .set(authHeaders(tg))
+      .send({ title: "no-due new" });
+
+    const now = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    // Urgent group (dueAt < now+7d), should sort ASC: overdue → today → +3d.
+    const overdue = await request(app)
+      .post("/v1/tasks")
+      .set(authHeaders(tg))
+      .send({
+        title: "overdue",
+        dueAt: new Date(now - 2 * day).toISOString(),
+      });
+    const today = await request(app)
+      .post("/v1/tasks")
+      .set(authHeaders(tg))
+      .send({
+        title: "today",
+        dueAt: new Date(now + 60 * 1000).toISOString(),
+      });
+    const inThreeDays = await request(app)
+      .post("/v1/tasks")
+      .set(authHeaders(tg))
+      .send({
+        title: "in 3 days",
+        dueAt: new Date(now + 3 * day).toISOString(),
+      });
+    // Rest group: dueAt strictly beyond the 7-day cutoff.
+    const inTenDays = await request(app)
+      .post("/v1/tasks")
+      .set(authHeaders(tg))
+      .send({
+        title: "in 10 days",
+        dueAt: new Date(now + 10 * day).toISOString(),
+      });
+
+    const list = await request(app)
+      .get("/v1/tasks?mode=my")
+      .set(authHeaders(tg));
+    expect(list.status).toBe(200);
+    const items = (list.body as { items: { numId: number }[] }).items;
+    expect(items.map((t) => t.numId)).toEqual([
+      overdue.body.numId,
+      today.body.numId,
+      inThreeDays.body.numId,
+      // Rest group: createdAt DESC — inTenDays was created after the no-due
+      // pair, then noDueNew, then noDueOld.
+      inTenDays.body.numId,
+      noDueNew.body.numId,
+      noDueOld.body.numId,
+    ]);
+    expect(list.body.total).toBe(6);
+  });
+
+  it("GET /v1/tasks?mode=my — pagination spans the group boundary correctly", async () => {
+    const tg = "801";
+    const now = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    // 1 urgent + 1 no-due => with PAGE_SIZE=12, page=0 returns both in
+    // [urgent, no-due] order; page=1 is empty; total=2.
+    const urgent = await request(app)
+      .post("/v1/tasks")
+      .set(authHeaders(tg))
+      .send({
+        title: "urgent",
+        dueAt: new Date(now + 1 * day).toISOString(),
+      });
+    const rest = await request(app)
+      .post("/v1/tasks")
+      .set(authHeaders(tg))
+      .send({ title: "no due" });
+
+    const page0 = await request(app)
+      .get("/v1/tasks?mode=my&page=0")
+      .set(authHeaders(tg));
+    expect(page0.status).toBe(200);
+    expect(
+      (page0.body as { items: { numId: number }[] }).items.map((t) => t.numId),
+    ).toEqual([urgent.body.numId, rest.body.numId]);
+    expect(page0.body.total).toBe(2);
+
+    const page1 = await request(app)
+      .get("/v1/tasks?mode=my&page=1")
+      .set(authHeaders(tg));
+    expect(page1.status).toBe(200);
+    expect(page1.body).toMatchObject({ items: [], page: 1, total: 2 });
+  });
+
   it("POST /v1/tasks — duplicate Idempotency-Key returns cached 201, only one row written", async () => {
     const idempotencyKey = randomUUID();
 
