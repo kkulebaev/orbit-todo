@@ -84,7 +84,7 @@ describe('TUI App', () => {
     expect(frame).toContain('first');
     expect(frame).toContain('second');
     expect(frame).toContain('third');
-    expect(frame).toMatch(/> 1\. first/);
+    expect(frame).toMatch(/>\s+1\. first/);
   });
 
   it('arrow-down moves the cursor to the next task', async () => {
@@ -103,7 +103,7 @@ describe('TUI App', () => {
     );
     await waitForFrame(lastFrame, (f) => f.includes('2. b'));
     stdin.write(ARROW_DOWN);
-    await waitForFrame(lastFrame, (f) => /> 2\. b/.test(f));
+    await waitForFrame(lastFrame, (f) => />\s+2\. b/.test(f));
   });
 
   it('arrow-up clamps cursor at 0', async () => {
@@ -123,7 +123,7 @@ describe('TUI App', () => {
     await flush();
     stdin.write(ARROW_UP);
     await flush();
-    expect(lastFrame()!).toMatch(/> 1\. a/);
+    expect(lastFrame()!).toMatch(/>\s+1\. a/);
   });
 
   it('arrow-right advances to the next page and refetches', async () => {
@@ -193,7 +193,7 @@ describe('TUI App', () => {
     );
     await waitForFrame(lastFrame, (f) => f.includes('finish me'));
     stdin.write('d');
-    await waitForFrame(lastFrame, (f) => f.includes('#7 закрыто'));
+    await waitForFrame(lastFrame, (f) => f.includes('finish me · закрыта'));
     expect(api.updateTask).toHaveBeenCalledWith(7, { status: 'done' }, 'idem-key-1');
   });
 
@@ -209,7 +209,7 @@ describe('TUI App', () => {
     );
     await waitForFrame(lastFrame, (f) => f.includes('redo'));
     stdin.write('o');
-    await waitForFrame(lastFrame, (f) => f.includes('#5 переоткрыто'));
+    await waitForFrame(lastFrame, (f) => f.includes('redo · переоткрыта'));
     expect(api.updateTask).toHaveBeenCalledWith(5, { status: 'open' }, 'idem-key-1');
   });
 
@@ -301,7 +301,7 @@ describe('TUI App — detail-view actions', () => {
   it('detail: "d" calls updateTask({status:"done"}) on an open task', async () => {
     const { api, stdin, lastFrame } = await openDetail();
     stdin.write('d');
-    await waitForFrame(lastFrame, (f) => f.includes('#100 закрыто'));
+    await waitForFrame(lastFrame, (f) => f.includes('pick milk · закрыта'));
     expect(api.updateTask).toHaveBeenCalledWith(100, { status: 'done' }, 'idem-key-1');
   });
 
@@ -328,7 +328,7 @@ describe('TUI App — detail-view actions', () => {
     await waitForFrame(lastFrame, (f) => f.includes('pick milk!'));
     await flush(); // let handler re-register before ENTER
     stdin.write(ENTER);
-    await waitForFrame(lastFrame, (f) => f.includes('#100 переименована'));
+    await waitForFrame(lastFrame, (f) => f.includes('Название обновлено'));
     expect(api.updateTask).toHaveBeenCalledWith(100, { title: 'pick milk!' }, 'idem-key-1');
   });
 
@@ -387,7 +387,7 @@ describe('TUI App — detail-view actions', () => {
     await waitForFrame(lastFrame, (f) => f.includes('(пусто)'));
     await flush(); // let handler re-register before ENTER
     stdin.write(ENTER);
-    await waitForFrame(lastFrame, (f) => f.includes('срок очищен'));
+    await waitForFrame(lastFrame, (f) => f.includes('Срок очищен'));
     expect(api.updateTask).toHaveBeenCalledWith(100, { dueAt: null }, 'idem-key-1');
   });
 
@@ -400,7 +400,7 @@ describe('TUI App — detail-view actions', () => {
     await waitForFrame(lastFrame, (f) => f.includes('20.05.2030 09:30'));
     await flush(); // let useInput re-register with the new value before ENTER
     stdin.write(ENTER);
-    await waitForFrame(lastFrame, (f) => f.includes('срок обновлён'));
+    await waitForFrame(lastFrame, (f) => f.includes('Срок обновлён'));
     expect(api.updateTask).toHaveBeenCalledWith(
       100,
       { dueAt: '2030-05-20T06:30:00.000Z', dueHasTime: true },
@@ -426,7 +426,7 @@ describe('TUI App — detail-view actions', () => {
     stdin.write('x');
     await waitForFrame(lastFrame, (f) => f.includes('Удалить задачу?'));
     stdin.write('y');
-    await waitForFrame(lastFrame, (f) => f.includes('#100 удалена'));
+    await waitForFrame(lastFrame, (f) => f.includes('pick milk · удалена'));
     expect(api.deleteTask).toHaveBeenCalledWith(100, 'idem-key-1');
     // Returned to list view (pager line visible).
     expect(lastFrame()!).toContain('Страница');
@@ -491,7 +491,7 @@ describe('TUI App — detail-view actions', () => {
     await waitForFrame(lastFrame, (f) => f.includes('Купить хлеб'));
     await flush(); // let useInput re-register with the new value before ENTER
     stdin.write(ENTER);
-    await waitForFrame(lastFrame, (f) => f.includes('#100 переименована'));
+    await waitForFrame(lastFrame, (f) => f.includes('Название обновлено'));
     expect(api.updateTask).toHaveBeenCalledWith(100, { title: 'Купить хлеб' }, 'idem-key-1');
   });
 });
@@ -515,13 +515,13 @@ describe('TUI App — create-task flow', () => {
     );
     await waitForFrame(lastFrame, (f) => f.includes('Нет задач.'));
     stdin.write('c');
-    await waitForFrame(lastFrame, (f) => f.includes('✍️ Новая задача'));
+    await waitForFrame(lastFrame, (f) => f.includes('Новая задача'));
     await flush();
     stdin.write('buy bread'); // single write — avoids stale-handler interleaving
     await waitForFrame(lastFrame, (f) => f.includes('buy bread'));
     await flush(); // let useInput re-register with the new value before ENTER
     stdin.write(ENTER);
-    await waitForFrame(lastFrame, (f) => f.includes('#11 создано'));
+    await waitForFrame(lastFrame, (f) => f.includes('buy bread · создана'));
     expect(api.createTask).toHaveBeenCalledWith({ title: 'buy bread' }, 'idem-key-1');
     // setRefreshKey fires async → wait for the list to actually refresh before counting calls
     await waitForFrame(lastFrame, (f) => f.includes('1. buy bread'));
@@ -535,7 +535,7 @@ describe('TUI App — create-task flow', () => {
     );
     await flush();
     stdin.write('c');
-    await waitForFrame(lastFrame, (f) => f.includes('✍️ Новая задача'));
+    await waitForFrame(lastFrame, (f) => f.includes('Новая задача'));
     await flush();
     stdin.write(ENTER);
     await waitForFrame(lastFrame, (f) => f.includes('Название не может быть пустым'));
@@ -549,10 +549,10 @@ describe('TUI App — create-task flow', () => {
     );
     await flush();
     stdin.write('c');
-    await waitForFrame(lastFrame, (f) => f.includes('✍️ Новая задача'));
+    await waitForFrame(lastFrame, (f) => f.includes('Новая задача'));
     stdin.write('Z');
     stdin.write(ESC);
-    await waitForFrame(lastFrame, (f) => !f.includes('✍️ Новая задача'));
+    await waitForFrame(lastFrame, (f) => !f.includes('Новая задача'));
     expect(api.createTask).not.toHaveBeenCalled();
   });
 
@@ -573,13 +573,13 @@ describe('TUI App — create-task flow', () => {
     );
     await waitForFrame(lastFrame, (f) => f.includes('Нет задач.'));
     stdin.write('c');
-    await waitForFrame(lastFrame, (f) => f.includes('✍️ Новая задача'));
+    await waitForFrame(lastFrame, (f) => f.includes('Новая задача'));
     await flush();
     stdin.write('buy bread'); // single write — simulates paste
     await waitForFrame(lastFrame, (f) => f.includes('buy bread'));
     await flush(); // let useInput re-register with the new value before ENTER
     stdin.write(ENTER);
-    await waitForFrame(lastFrame, (f) => f.includes('#11 создано'));
+    await waitForFrame(lastFrame, (f) => f.includes('buy bread · создана'));
     expect(api.createTask).toHaveBeenCalledTimes(1);
     expect(api.createTask).toHaveBeenCalledWith({ title: 'buy bread' }, 'idem-key-1');
   });
@@ -594,7 +594,7 @@ describe('TUI App — create-task flow', () => {
     );
     await flush();
     stdin.write('c');
-    await waitForFrame(lastFrame, (f) => f.includes('✍️ Новая задача'));
+    await waitForFrame(lastFrame, (f) => f.includes('Новая задача'));
     await flush();
     stdin.write('abc');
     await waitForFrame(lastFrame, (f) => f.includes('abc'));

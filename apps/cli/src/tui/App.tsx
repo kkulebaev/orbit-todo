@@ -58,6 +58,14 @@ export function App({
     if (cursor >= items.length) setCursor(Math.max(0, items.length - 1));
   }, [items.length, cursor]);
 
+  // Auto-hide the flash status after 4s. A new setMessage restarts the timer
+  // via the cleanup; setMessage(null) elsewhere short-circuits.
+  useEffect(() => {
+    if (!message) return;
+    const id = setTimeout(() => setMessage(null), 4000);
+    return () => clearTimeout(id);
+  }, [message]);
+
   // Stable handler reads latest state via a ref — see commit f319c58 for the
   // race rationale (input arrives before ink's useEffect re-attaches the
   // listener after a re-render with new items).
@@ -86,8 +94,8 @@ export function App({
         await client.updateTask(task.numId, { status }, idempotencyKey());
         setMessage(
           status === 'done'
-            ? `#${task.numId} закрыто`
-            : `#${task.numId} переоткрыто`,
+            ? `${task.title} · закрыта`
+            : `${task.title} · переоткрыта`,
         );
         setRefreshKey((k) => k + 1);
       } catch (e) {
@@ -107,7 +115,7 @@ export function App({
       }
       try {
         await client.updateTask(task.numId, { title }, idempotencyKey());
-        setMessage(`#${task.numId} переименована`);
+        setMessage('Название обновлено');
         setSubMode(null);
         setEditBuffer('');
         setRefreshKey((k) => k + 1);
@@ -125,9 +133,9 @@ export function App({
       try {
         if (trimmed === '') {
           await client.updateTask(task.numId, { dueAt: null }, idempotencyKey());
-          setMessage(`#${task.numId}: срок очищен`);
+          setMessage('Срок очищен');
         } else {
-          const parsed = parseDueDateInput(trimmed, now);
+          const parsed = parseDueDateInput(normalizeDateInput(trimmed), now);
           if (!parsed.ok) {
             setMessage(
               parsed.error === 'past'
@@ -141,7 +149,7 @@ export function App({
             { dueAt: parsed.dueAt.toISOString(), dueHasTime: parsed.dueHasTime },
             idempotencyKey(),
           );
-          setMessage(`#${task.numId}: срок обновлён`);
+          setMessage('Срок обновлён');
         }
         setSubMode(null);
         setEditBuffer('');
@@ -163,7 +171,7 @@ export function App({
       }
       try {
         const created = await client.createTask({ title }, idempotencyKey());
-        setMessage(`#${created.numId} создано`);
+        setMessage(`${created.title} · создана`);
         setSubMode(null);
         setEditBuffer('');
         setRefreshKey((k) => k + 1);
@@ -179,7 +187,7 @@ export function App({
     async (task: TaskDto): Promise<void> => {
       try {
         await client.deleteTask(task.numId, idempotencyKey());
-        setMessage(`#${task.numId} удалена`);
+        setMessage(`${task.title} · удалена`);
         setSubMode(null);
         setView('list');
         setRefreshKey((k) => k + 1);
@@ -235,10 +243,12 @@ export function App({
         if (!sel) return;
         if (input === 'd' && sel.status === 'open') {
           void mutateStatus(sel, 'done');
+          setView('list');
           return;
         }
         if (input === 'o' && sel.status === 'done') {
           void mutateStatus(sel, 'open');
+          setView('list');
           return;
         }
         if (input === 'e') {
@@ -340,14 +350,15 @@ export function App({
             />
           </Box>
           {subMode === 'create-task' ? (
-            <Box marginTop={1} flexDirection="column">
-              <Text>✍️ Новая задача:</Text>
+            <Box marginTop={1} borderStyle="round" borderColor="gray" paddingX={1}>
+              <Text color="gray">{'> '}</Text>
               <TextInput
                 value={editBuffer}
                 onChange={setEditBuffer}
                 onSubmit={(v) => void submitCreate(v)}
                 focus
                 showCursor
+                placeholder="Новая задача"
               />
             </Box>
           ) : null}
@@ -363,13 +374,9 @@ export function App({
           onSubmitDue={(task, v) => void submitDue(task, v)}
         />
       ) : null}
-      {message ? (
-        <Box>
-          <Text color="cyan">{message}</Text>
-        </Box>
-      ) : null}
+      {message ? <FlashMessage message={message} /> : null}
       <Box marginTop={1}>
-        <Text dimColor>{helpBar(view, subMode)}</Text>
+        <Text dimColor>{helpBar(view, subMode, mode, selected?.status)}</Text>
       </Box>
     </Box>
   );
@@ -378,12 +385,16 @@ export function App({
 function helpBar(
   view: 'list' | 'detail',
   subMode: SubMode,
+  mode: TaskMode,
+  selectedStatus: 'open' | 'done' | undefined,
 ): string {
   if (view === 'list') {
     if (subMode === 'create-task') {
       return 'печатайте · ←→ курсор · enter сохранить · esc отмена';
     }
-    return '↑↓ навигация · ←→ страница · enter открыть · c создать · d закрыть · o переоткрыть · m режим · g обновить · q выход';
+    // In "Мои задачи" only `d` is meaningful; in "Выполненные" only `o`.
+    const statusKey = mode === 'done' ? 'o переоткрыть' : 'd закрыть';
+    return `↑↓ навигация · ←→ страница · enter открыть · c создать · ${statusKey} · m режим · g обновить · q выход`;
   }
   if (subMode === 'edit-title') {
     return 'печатайте · ←→ курсор · enter сохранить · esc отмена';
@@ -394,7 +405,8 @@ function helpBar(
   if (subMode === 'confirm-delete') {
     return 'y — удалить · n / esc — отмена';
   }
-  return 'd закрыть · o переоткрыть · e название · t срок · x удалить · q назад';
+  const statusKey = selectedStatus === 'done' ? 'o переоткрыть' : 'd закрыть';
+  return `${statusKey} · e название · t срок · x удалить · q назад`;
 }
 
 function ListView({
@@ -441,15 +453,25 @@ function ListView({
         const due = task.dueAt ? renderDueCell(task, now) : '';
         return (
           <Box key={task.numId}>
-            <Text inverse={sel}>
-              {sel ? '> ' : '  '}
-              {n}. {task.title}
-              {due ? (
-                <>
-                  {' '}· ⏰ <Text italic>{due}</Text>
-                </>
-              ) : null}
-            </Text>
+            <Box flexShrink={0}>
+              <Text color={sel ? 'cyan' : undefined} bold={sel}>
+                {sel ? '> ' : '  '}
+                {`${n}.`.padStart(3)}
+                {' '}
+              </Text>
+            </Box>
+            <Box flexGrow={1} flexShrink={1}>
+              <Text color={sel ? 'cyan' : undefined} bold={sel} wrap="truncate-end">
+                {task.title}
+              </Text>
+            </Box>
+            {due ? (
+              <Box flexShrink={0} marginLeft={1}>
+                <Text dimColor italic>
+                  {due.startsWith('⚠️') ? due : `⏰ ${due}`}
+                </Text>
+              </Box>
+            ) : null}
           </Box>
         );
       })}
@@ -481,33 +503,29 @@ function DetailView({
   return (
     <Box flexDirection="column">
       <Text bold>📝 Задача</Text>
-      <Box marginTop={1} flexDirection="column">
-        {subMode === 'edit-title' ? (
-          <TextInput
-            value={editBuffer}
-            onChange={setEditBuffer}
-            onSubmit={(v) => onSubmitTitle(task, v)}
-            focus
-            showCursor
-          />
-        ) : (
+      {subMode === 'edit-title' ? null : (
+        <Box marginTop={1} flexDirection="column">
           <Text bold>{task.title}</Text>
-        )}
-      </Box>
+        </Box>
+      )}
       <Box marginTop={1} flexDirection="column">
         <Text>{statusLine}</Text>
         <Text>{createdLine}</Text>
         {subMode === 'edit-due' ? (
           <Box flexDirection="column">
-            <Text>Срок: </Text>
-            <TextInput
-              value={editBuffer}
-              onChange={setEditBuffer}
-              onSubmit={(v) => onSubmitDue(task, v)}
-              focus
-              showCursor
-            />
-            {editBuffer === '' && <Text dimColor>(пусто)</Text>}
+            <Text>Срок:</Text>
+            <Box borderStyle="round" borderColor="gray" paddingX={1}>
+              <Text color="gray">{'> '}</Text>
+              <TextInput
+                value={editBuffer}
+                onChange={setEditBuffer}
+                onSubmit={(v) => onSubmitDue(task, v)}
+                focus
+                showCursor
+                placeholder="DD.MM.YYYY [HH:MM]"
+              />
+            </Box>
+            <DuePreview raw={editBuffer} now={now} />
           </Box>
         ) : showDueLine ? (
           <Text>Срок: {dueText}</Text>
@@ -516,6 +534,19 @@ function DetailView({
           <Text>Закрыто: {formatSmart(new Date(task.doneAt), now)}</Text>
         ) : null}
       </Box>
+      {subMode === 'edit-title' ? (
+        <Box marginTop={1} borderStyle="round" borderColor="gray" paddingX={1}>
+          <Text color="gray">{'> '}</Text>
+          <TextInput
+            value={editBuffer}
+            onChange={setEditBuffer}
+            onSubmit={(v) => onSubmitTitle(task, v)}
+            focus
+            showCursor
+            placeholder="Название задачи"
+          />
+        </Box>
+      ) : null}
       {subMode === 'confirm-delete' ? (
         <Box marginTop={1}>
           <Text color="red">Удалить задачу? (y/n)</Text>
@@ -523,6 +554,67 @@ function DetailView({
       ) : null}
     </Box>
   );
+}
+
+type FlashTone = 'success' | 'error' | 'warning' | 'info';
+
+function classifyMessage(msg: string): { tone: FlashTone; icon: string; color: string } {
+  if (msg.startsWith('Ошибка')) return { tone: 'error', icon: '✗', color: 'red' };
+  if (
+    msg === 'Название не может быть пустым' ||
+    msg === 'Дата уже прошла' ||
+    msg.startsWith('Формат:')
+  ) {
+    return { tone: 'warning', icon: '⚠', color: 'yellow' };
+  }
+  if (msg.startsWith('Режим:')) return { tone: 'info', icon: '›', color: 'cyan' };
+  return { tone: 'success', icon: '✓', color: 'green' };
+}
+
+function FlashMessage({ message }: { message: string }): React.JSX.Element {
+  const { icon, color } = classifyMessage(message);
+  return (
+    <Box marginTop={1} borderStyle="round" borderColor={color} paddingX={1}>
+      <Text color={color} bold>
+        {icon}
+        {' '}
+      </Text>
+      <Text color={color}>{message}</Text>
+    </Box>
+  );
+}
+
+/**
+ * Lets the user type a date as bare digits — `02062026` → `02.06.2026`,
+ * `020620261830` → `02.06.2026 18:30`. If the input already contains a dot
+ * we trust the user to be in DD.MM.YYYY mode and pass it through unchanged.
+ */
+function normalizeDateInput(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed === '' || trimmed.includes('.')) return trimmed;
+  const digits = trimmed.replace(/\D/g, '');
+  if (digits.length < 8) return trimmed;
+  const dd = digits.slice(0, 2);
+  const mm = digits.slice(2, 4);
+  const yyyy = digits.slice(4, 8);
+  let out = `${dd}.${mm}.${yyyy}`;
+  if (digits.length >= 12) {
+    out += ` ${digits.slice(8, 10)}:${digits.slice(10, 12)}`;
+  }
+  return out;
+}
+
+function DuePreview({ raw, now }: { raw: string; now: Date }): React.JSX.Element {
+  if (raw.trim() === '') return <Text dimColor>(пусто)</Text>;
+  const normalized = normalizeDateInput(raw);
+  const parsed = parseDueDateInput(normalized, now);
+  if (parsed.ok) {
+    return <Text dimColor>Распознано: {normalized}</Text>;
+  }
+  if (parsed.error === 'past') {
+    return <Text color="yellow">Дата уже прошла</Text>;
+  }
+  return <Text color="red">Невалидно</Text>;
 }
 
 function formatDueForInput(
